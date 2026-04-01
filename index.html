@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Cœur à Cœur ♥</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{background:#f8bbd0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:monospace;color:#c0004a;touch-action:none;}
+    h1{font-size:20px;font-weight:500;letter-spacing:0.12em;margin-bottom:10px;color:#c0004a;}
+    #hud{display:flex;gap:1.5rem;margin-bottom:10px;font-size:13px;color:#a0005a;}
+    #hud span b{color:#c0004a;font-weight:500;}
+    canvas{border:0.5px solid rgba(255,150,180,0.4);border-radius:12px;display:block;max-width:100vw;}
+    #msg{margin-top:10px;font-size:12px;color:#a0005a;text-align:center;padding:0 1rem;}
+    #btn{margin-top:8px;padding:10px 28px;font-family:monospace;font-size:14px;cursor:pointer;border:0.5px solid rgba(220,100,140,0.6);background:transparent;color:#c0004a;border-radius:8px;letter-spacing:0.08em;}
+    #btn:hover{background:rgba(255,150,180,0.2);}
+
+    #dpad{display:grid;grid-template-columns:64px 64px 64px;grid-template-rows:64px 64px 64px;gap:6px;margin-top:16px;user-select:none;}
+    .dkey{width:64px;height:64px;display:flex;align-items:center;justify-content:center;font-size:26px;
+      background:rgba(220,0,80,0.15);border:2px solid rgba(220,0,80,0.35);border-radius:12px;
+      cursor:pointer;color:#c0004a;touch-action:none;-webkit-tap-highlight-color:transparent;}
+    .dkey.pressed{background:rgba(220,0,80,0.4);border-color:rgba(220,0,80,0.75);}
+    .dkey.empty{background:transparent;border:none;pointer-events:none;}
+  </style>
+</head>
+<body>
+  <h1>♥ Cœur à Cœur ♥</h1>
+  <div id="hud">
+    <span>score <b id="sc">0</b></span>
+    <span>vies <b id="lv">♥♥♥</b></span>
+    <span>niveau <b id="lv2">1</b></span>
+  </div>
+  <canvas id="canvas" width="360" height="480"></canvas>
+  <div id="msg">attrape les cœurs roses · évite les étoiles blanches</div>
+  <button id="btn">▶ Jouer</button>
+
+  <div id="dpad">
+    <div class="dkey empty"></div>
+    <div class="dkey" id="d-up">▲</div>
+    <div class="dkey empty"></div>
+    <div class="dkey" id="d-left">◀</div>
+    <div class="dkey empty"></div>
+    <div class="dkey" id="d-right">▶</div>
+    <div class="dkey empty"></div>
+    <div class="dkey" id="d-down">▼</div>
+    <div class="dkey empty"></div>
+  </div>
+
+<script>
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const W=360,H=480;
+let state='idle',score=0,lives=3,level=1,frame=0,speed=2.2,gameLoop;
+let ship,hearts=[],meteors=[],particles=[],bgStars=[];
+
+const HRT=[
+  [0,1,1,0,0,1,1,0],
+  [1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1],
+  [0,1,1,1,1,1,1,0],
+  [0,0,1,1,1,1,0,0],
+  [0,0,0,1,1,0,0,0],
+];
+
+function drawPixelHeart(x,y,scale,alpha){
+  ctx.save();ctx.globalAlpha=alpha||1;
+  const px=scale||3,cols=HRT[0].length,rows=HRT.length;
+  const ox=x-cols*px/2,oy=y-rows*px/2;
+  HRT.forEach((row,r)=>row.forEach((cell,c)=>{
+    if(!cell)return;
+    ctx.fillStyle='#e81060';ctx.fillRect(ox+c*px,oy+r*px,px,px);
+    if(r===0||c===0){ctx.fillStyle='#ff5090';ctx.fillRect(ox+c*px,oy+r*px,Math.ceil(px*0.5),Math.ceil(px*0.5));}
+  }));
+  ctx.globalAlpha=1;ctx.restore();
+}
+
+function drawWhiteStar(x,y,r,angle,alpha){
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle||0);ctx.globalAlpha=alpha||1;
+  const outer=r,inner=r*0.42,pts=5;
+  ctx.beginPath();
+  for(let i=0;i<pts*2;i++){
+    const a=i*Math.PI/pts-Math.PI/2,rad=i%2===0?outer:inner;
+    i===0?ctx.moveTo(Math.cos(a)*rad,Math.sin(a)*rad):ctx.lineTo(Math.cos(a)*rad,Math.sin(a)*rad);
+  }
+  ctx.closePath();ctx.fillStyle='#ffffff';ctx.fill();
+  ctx.strokeStyle='rgba(255,180,210,0.5)';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.globalAlpha=1;ctx.restore();
+}
+
+function drawPerfume(x,y,tilt){
+  ctx.save();ctx.translate(x,y);ctx.rotate(tilt||0);
+  const bw=13,bh=72,top=-bh/2,bot=bh/2;
+  const bg=ctx.createLinearGradient(-bw/2,0,bw/2,0);
+  bg.addColorStop(0,'#6a0010');bg.addColorStop(0.2,'#c0001a');
+  bg.addColorStop(0.55,'#e8002a');bg.addColorStop(0.82,'#b0001a');bg.addColorStop(1,'#5a000e');
+  ctx.fillStyle=bg;ctx.beginPath();ctx.roundRect(-bw/2,top,bw,bh,3);ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.13)';ctx.fillRect(-bw/2+1,top+4,3,bh-8);
+  ctx.fillStyle='#c8a020';ctx.fillRect(-bw/2,top+14,bw,2);
+  ctx.fillStyle='#c8a020';ctx.fillRect(-bw/2,bot-3,bw,3);
+  const cg=ctx.createLinearGradient(-bw/2,0,bw/2,0);
+  cg.addColorStop(0,'#777');cg.addColorStop(0.3,'#bbb');cg.addColorStop(0.6,'#aaa');cg.addColorStop(1,'#666');
+  ctx.fillStyle=cg;ctx.beginPath();ctx.roundRect(-bw/2,top,bw,16,[3,3,0,0]);ctx.fill();
+  ctx.fillStyle='#c8a020';ctx.fillRect(-bw/2,top+14,bw,2);
+  ctx.fillStyle='#dce8f0';ctx.fillRect(-4,top+3,8,8);
+  ctx.fillStyle='#c8a020';
+  ctx.beginPath();
+  for(let i=0;i<10;i++){
+    const a=i*Math.PI/5-Math.PI/2,rad=i%2===0?3:3*0.42;
+    i===0?ctx.moveTo(Math.cos(a)*rad,Math.sin(a)*rad+top+7):ctx.lineTo(Math.cos(a)*rad,Math.sin(a)*rad+top+7);
+  }
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function initBg(){bgStars=[];for(let i=0;i<70;i++)bgStars.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+0.3,s:Math.random()*0.3+0.05,twinkle:Math.random()*Math.PI*2});}
+function initShip(){ship={x:W/2,y:H-80,vx:0,vy:0,trail:[]};}
+function spawnHeart(){hearts.push({x:20+Math.random()*(W-40),y:-20,scale:3+Math.random()*2,pulse:Math.random()*Math.PI*2});}
+function spawnMeteor(){meteors.push({x:15+Math.random()*(W-30),y:-30,r:12+Math.random()*8,angle:Math.random()*Math.PI*2,rotSpeed:(Math.random()-0.5)*0.05,speed:speed*1.1+Math.random()*1.2});}
+function emitHeartParticles(x,y,n){for(let i=0;i<n;i++){let a=Math.random()*Math.PI*2,s=1.5+Math.random()*3.5;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,type:'heart',scale:1+Math.random()*1.5});}}
+function emitExplosion(x,y,n){for(let i=0;i<n;i++){let a=Math.random()*Math.PI*2,s=1+Math.random()*4;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,type:'square',size:2+Math.random()*3,color:'#ffaacc'});}}
+
+const keys={};
+document.addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();});
+document.addEventListener('keyup',e=>keys[e.key]=false);
+
+const dpad={up:false,down:false,left:false,right:false};
+function bindDkey(id,dir){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault();dpad[dir]=true;el.classList.add('pressed');};
+  const off=e=>{e.preventDefault();dpad[dir]=false;el.classList.remove('pressed');};
+  el.addEventListener('touchstart',on,{passive:false});
+  el.addEventListener('touchend',off,{passive:false});
+  el.addEventListener('touchcancel',off,{passive:false});
+  el.addEventListener('mousedown',on);
+  el.addEventListener('mouseup',off);
+  el.addEventListener('mouseleave',off);
+}
+bindDkey('d-up','up');
+bindDkey('d-down','down');
+bindDkey('d-left','left');
+bindDkey('d-right','right');
+
+function updateShip(){
+  const acc=0.42,maxV=5,fric=0.88;
+  if(keys['ArrowUp']  ||keys['w']||keys['W']||dpad.up)   ship.vy-=acc;
+  if(keys['ArrowDown']||keys['s']||keys['S']||dpad.down)  ship.vy+=acc;
+  if(keys['ArrowLeft']||keys['a']||keys['A']||dpad.left)  ship.vx-=acc;
+  if(keys['ArrowRight']||keys['d']||keys['D']||dpad.right)ship.vx+=acc;
+  ship.vx*=fric;ship.vy*=fric;
+  ship.vx=Math.max(-maxV,Math.min(maxV,ship.vx));
+  ship.vy=Math.max(-maxV,Math.min(maxV,ship.vy));
+  ship.x+=ship.vx;ship.y+=ship.vy;
+  ship.x=Math.max(18,Math.min(W-18,ship.x));
+  ship.y=Math.max(50,Math.min(H-50,ship.y));
+  ship.trail.push({x:ship.x,y:ship.y});
+  if(ship.trail.length>14)ship.trail.shift();
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function collide(){
+  for(let i=hearts.length-1;i>=0;i--){
+    if(dist(ship,hearts[i])<hearts[i].scale*3.5+10){
+      emitHeartParticles(hearts[i].x,hearts[i].y,12);
+      hearts.splice(i,1);score+=10*level;
+      document.getElementById('sc').textContent=score;
+      if(score%(100*level)===0)levelUp();return;
+    }
+  }
+  for(let i=meteors.length-1;i>=0;i--){
+    if(dist(ship,meteors[i])<meteors[i].r+8){
+      emitExplosion(ship.x,ship.y,18);
+      meteors.splice(i,1);lives--;updateLives();
+      if(lives<=0){endGame();return;}
+    }
+  }
+}
+function updateLives(){document.getElementById('lv').textContent='♥'.repeat(lives)+'♡'.repeat(3-lives);}
+function levelUp(){level++;speed+=0.35;document.getElementById('lv2').textContent=level;}
+
+function drawBg(){
+  let g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#fce4ec');g.addColorStop(0.55,'#f8bbd0');g.addColorStop(1,'#f48fb1');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  bgStars.forEach(s=>{
+    s.twinkle+=0.03;let a=0.4+0.35*Math.sin(s.twinkle);
+    ctx.save();ctx.globalAlpha=a;ctx.strokeStyle='#fff';ctx.lineWidth=s.r*0.9;ctx.lineCap='round';
+    let sz=s.r*2.5;
+    ctx.beginPath();ctx.moveTo(s.x-sz,s.y);ctx.lineTo(s.x+sz,s.y);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(s.x,s.y-sz);ctx.lineTo(s.x,s.y+sz);ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function tick(){
+  frame++;updateShip();
+  bgStars.forEach(s=>{s.y+=s.s;if(s.y>H){s.y=0;s.x=Math.random()*W;}});
+  if(frame%Math.max(38,88-level*7)===0)spawnHeart();
+  if(frame%Math.max(22,72-level*5)===0)spawnMeteor();
+  hearts.forEach(h=>{h.y+=speed;h.pulse+=0.08;});
+  meteors.forEach(m=>{m.y+=m.speed;m.angle+=m.rotSpeed;});
+  hearts=hearts.filter(h=>h.y<H+30);
+  meteors=meteors.filter(m=>m.y<H+40);
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vx*=0.92;p.vy*=0.92;p.life-=0.045;});
+  particles=particles.filter(p=>p.life>0);
+  collide();draw();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);drawBg();
+  meteors.forEach(m=>drawWhiteStar(m.x,m.y,m.r,m.angle,1));
+  hearts.forEach(h=>{
+    let p=1+0.15*Math.sin(h.pulse);
+    ctx.save();ctx.translate(h.x,h.y);ctx.scale(p,p);ctx.translate(-h.x,-h.y);
+    drawPixelHeart(h.x,h.y,h.scale);ctx.restore();
+  });
+  particles.forEach(p=>{
+    ctx.save();ctx.globalAlpha=p.life;
+    if(p.type==='heart'){ctx.translate(p.x,p.y);ctx.scale(p.life,p.life);ctx.translate(-p.x,-p.y);drawPixelHeart(p.x,p.y,p.scale||2,p.life);}
+    else{let s=p.size*p.life;ctx.fillStyle=p.color;ctx.fillRect(p.x-s/2,p.y-s/2,s,s);}
+    ctx.restore();
+  });
+  ship.trail.forEach((pt,i)=>{
+    let s=1.5*(i/ship.trail.length);
+    ctx.fillStyle='rgba(200,0,60,'+(0.15*i/ship.trail.length)+')';
+    ctx.fillRect(pt.x-s/2,pt.y-s/2,s,s);
+  });
+  drawPerfume(ship.x,ship.y,Math.max(-0.22,Math.min(0.22,ship.vx*0.04)));
+}
+
+function startGame(){
+  score=0;lives=3;level=1;speed=2.2;frame=0;
+  hearts=[];meteors=[];particles=[];
+  initBg();initShip();
+  document.getElementById('sc').textContent=0;
+  document.getElementById('lv2').textContent=1;
+  updateLives();
+  document.getElementById('btn').style.display='none';
+  document.getElementById('msg').textContent='attrape les coeurs roses · evite les etoiles blanches';
+  state='playing';clearInterval(gameLoop);
+  gameLoop=setInterval(tick,1000/60);
+}
+
+function endGame(){
+  clearInterval(gameLoop);state='idle';
+  document.getElementById('msg').textContent='Game over ! Score : '+score+' pts';
+  document.getElementById('btn').textContent='Rejouer';
+  document.getElementById('btn').style.display='';
+  let g=ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,'rgba(252,228,236,0.85)');g.addColorStop(1,'rgba(244,143,177,0.85)');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.font='bold 28px monospace';ctx.fillStyle='#c0004a';ctx.textAlign='center';
+  ctx.fillText('GAME OVER',W/2,H/2-20);
+  ctx.font='16px monospace';ctx.fillStyle='#e84080';
+  ctx.fillText('Score : '+score,W/2,H/2+16);ctx.textAlign='start';
+}
+
+document.getElementById('btn').addEventListener('click',startGame);
+initBg();
+let g=ctx.createLinearGradient(0,0,0,H);
+g.addColorStop(0,'#fce4ec');g.addColorStop(0.55,'#f8bbd0');g.addColorStop(1,'#f48fb1');
+ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+bgStars.forEach(s=>{ctx.save();ctx.globalAlpha=0.6;ctx.strokeStyle='#fff';ctx.lineWidth=s.r*0.9;ctx.lineCap='round';let sz=s.r*2.5;ctx.beginPath();ctx.moveTo(s.x-sz,s.y);ctx.lineTo(s.x+sz,s.y);ctx.stroke();ctx.beginPath();ctx.moveTo(s.x,s.y-sz);ctx.lineTo(s.x,s.y+sz);ctx.stroke();ctx.restore();});
+drawPixelHeart(W/2-40,H/2,4);drawPixelHeart(W/2+30,H/2-20,3);drawPixelHeart(W/2-10,H/2+40,2.5);
+drawWhiteStar(W/2+80,H/2-30,16,0.3,0.7);drawWhiteStar(W/2-80,H/2+20,12,0.8,0.5);
+ctx.font='16px monospace';ctx.fillStyle='rgba(180,0,80,0.55)';ctx.textAlign='center';
+ctx.fillText('appuie sur Jouer',W/2,H/2+60);ctx.textAlign='start';
+</script>
+</body>
+</html>
